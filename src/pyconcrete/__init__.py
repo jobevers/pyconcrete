@@ -6,7 +6,6 @@ from os.path import join, exists, isdir
 import os
 import base64
 
-
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -48,7 +47,6 @@ def decrypt_file(path):
 def decrypt_buffer(data):
     assert _KEY
     salt, data = data[:SALT_SIZE], data[SALT_SIZE:]
-    print(salt, data)
     key = generate_key(_KEY, salt)
     f = Fernet(key)
     return f.decrypt(data)
