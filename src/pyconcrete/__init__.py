@@ -1,106 +1,90 @@
-#!/usr/bin/env python
-#
-# Copyright 2015 Falldog Hsieh <falldog7@gmail.com>
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import sys
-import imp
+import importlib
+import importlib.abc
 import marshal
 from os.path import join, exists, isdir
+import os
+import base64
+
+from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 
 EXT_PY  = '.py'
 EXT_PYC = '.pyc'
 EXT_PYD = '.pyd'
 EXT_PYE = '.pye'
 
-__all__ = ["info"]
 
-from . import _pyconcrete
-
-info = _pyconcrete.info
-encrypt_file = _pyconcrete.encrypt_file
-decrypt_file = _pyconcrete.decrypt_file
-decrypt_buffer = _pyconcrete.decrypt_buffer
+__all__ = ["init"]
 
 
-class PyeLoader(object):
+SALT_SIZE = 16
+_KEY = None
+
+
+def encrypt_file(pyc_file, pye_file, password):
+    salt = os.urandom(SALT_SIZE)
+    key = generate_key(password, salt)
+    f = Fernet(key)
+    with open(pyc_file, 'rb') as fin:
+        data = fin.read()
+    with open(pye_file, 'wb') as fout:
+        encrypted = f.encrypt(data)
+        fout.write(salt)
+        fout.write(encrypted)
+
+
+def decrypt_file(path):
+    with open(path, 'rb') as f:
+        encrypted_data = f.read()
+        print(encrypted_data)
+    return decrypt_buffer(encrypted_data)
+
+
+def decrypt_buffer(data):
+    assert _KEY
+    salt, data = data[:SALT_SIZE], data[SALT_SIZE:]
+    print(salt, data)
+    key = generate_key(_KEY, salt)
+    f = Fernet(key)
+    return f.decrypt(data)
+
+
+class PyeLoader(importlib.abc.SourceLoader):
     def __init__(self, is_pkg, pkg_path, full_path):
         self.is_pkg = is_pkg
         self.pkg_path = pkg_path
         self.full_path = full_path
-        with open(full_path, 'rb') as f:
-            self.data = f.read()
 
-    def new_module(self, fullname, path, package_path):
-        m = imp.new_module(fullname)
-        m.__file__ = path
-        m.__loader__ = self
-        if self.is_pkg:
-            m.__path__ = [package_path]
+    def get_data(self, path):
+        with open(path, 'rb') as f:
+            encrypted_data = f.read()
+            print(encrypted_data)
+        data = decrypt_buffer(encrypted_data)
+        print(data)
+        return data
 
-        if "__name__" not in m.__dict__:
-            m.__name__ = fullname
+    def get_filename(self, fullname):
+        return self.full_path
 
-        return m
 
-    def load_module(self, fullname):
-        if fullname in sys.modules:  # skip reload by now ...
-            return sys.modules[fullname]
-
-        data = decrypt_buffer(self.data)  # decrypt pye
-
-        self._validate_version(data)
-
-        if sys.version_info >= (3, 3):
-            # reference python source code
-            # python/Lib/importlib/_bootstrap_external.py _code_to_bytecode()
-            # MAGIC + TIMESTAMP + FILE_SIZE
-            magic = 12
+class PyeMetaPathFinder(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        print('Looking for {}:{}'.format(fullname, path))
+        loader = self.get_loader(fullname, path)
+        if loader:
+            return importlib.util.spec_from_loader(fullname, loader)
         else:
-            # load pyc from memory
-            # reference http://stackoverflow.com/questions/1830727/how-to-load-compiled-python-modules-from-memory
-            # MAGIC + TIMESTAMP
-            magic = 8
+            return None
 
-        code = marshal.loads(data[magic:])
-
-        m = self.new_module(fullname, self.full_path, self.pkg_path)
-        sys.modules[fullname] = m
-        exec(code, m.__dict__)
-        return m
-
-    def is_package(self, fullname):
-        return self.is_pkg
-
-    @staticmethod
-    def _validate_version(data):
-        magic = imp.get_magic()
-        ml = len(magic)
-        if data[:ml] != magic:
-            import struct
-            # convert little-endian byte string to unsigned short
-            py_magic = struct.unpack('<H', magic[:2])[0]
-            pye_magic = struct.unpack('<H', data[:2])[0]
-            raise ValueError("Python version doesn't match with magic: python(%d) != pye(%d)" % (py_magic, pye_magic))
-
-
-class PyeMetaPathFinder(object):
-    def find_module(self, fullname, path=None):
+    def get_loader(self, fullname, path):
         mod_name = fullname.split('.')[-1]
         paths = path if path else sys.path
-
         for trypath in paths:
+            print('Looking for {} on {}'.format(fullname, trypath))
             mod_path = join(trypath, mod_name)
             is_pkg = isdir(mod_path)
             if is_pkg:
@@ -109,9 +93,22 @@ class PyeMetaPathFinder(object):
             else:
                 full_path = mod_path + EXT_PYE
                 pkg_path = trypath
-
             if exists(full_path):
                 return PyeLoader(is_pkg, pkg_path, full_path)
 
 
-sys.meta_path.insert(0, PyeMetaPathFinder())
+def generate_key(password, salt):
+    password_as_bytes = password.encode('utf-8')
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend())
+    return base64.urlsafe_b64encode(kdf.derive(password_as_bytes))
+
+
+def init(password):
+    global _KEY
+    _KEY = password
+    sys.meta_path.insert(0, PyeMetaPathFinder())

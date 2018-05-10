@@ -1,24 +1,10 @@
-#!/usr/bin/env python
-#
-# Copyright 2015 Falldog Hsieh <falldog7@gmail.com>
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+#!/usr/bin/env python3
 import fnmatch
 import os
 import sys
 import unittest
 import argparse
+import getpass
 import py_compile
 import subprocess
 from os.path import abspath, dirname, join, exists, isdir, isfile
@@ -85,17 +71,20 @@ class PyConcreteAdmin(object):
         if not args.pye and not args.pyc:
             raise PyConcreteError("arg: compile, need assign the type for compile to `pye` or `pyc`")
 
+        password = getpass.getpass('Encryption Password: ')
+        password_check = getpass.getpass('Retype Password: ')
+        assert password == password_check
         if isfile(args.source):
             if not args.source.endswith('.py'):
                 raise PyConcreteError("source file should end with .py")
 
             if args.pye:
-                self._compile_pye_file(args, args.source)
+                self._compile_pye_file(args, args.source, password)
             elif args.pyc:
                 self._compile_pyc_file(args, args.source)
 
         elif isdir(args.source):
-            self._compile_dir(args, args.source)
+            self._compile_dir(args, args.source, password)
 
     def get_ignore_patterns(self, args):
         patterns = []
@@ -107,7 +96,7 @@ class PyConcreteAdmin(object):
             patterns.append(pat)
         return patterns
 
-    def _compile_dir(self, args, folder):
+    def _compile_dir(self, args, folder, password):
         # ignore patterns
         patterns = self.get_ignore_patterns(args)
         for file in os.listdir(folder):
@@ -116,10 +105,10 @@ class PyConcreteAdmin(object):
                 continue
 
             if isdir(fullpath):
-                self._compile_dir(args, fullpath)
+                self._compile_dir(args, fullpath, password)
             elif fullpath.endswith('.py'):
                 if args.pye:
-                    self._compile_pye_file(args, fullpath)
+                    self._compile_pye_file(args, fullpath, password)
                 elif args.pyc:
                     self._compile_pyc_file(args, fullpath)
 
@@ -137,28 +126,29 @@ class PyConcreteAdmin(object):
         if args.remove_py:
             os.remove(py_file)
 
-    def _compile_pye_file(self, args, py_file):
+    def _compile_pye_file(self, args, py_file, password):
         """
         if there is no .pyc file, compile .pyc first
         then compile .pye
         """
         import pyconcrete
-        pyc_file = py_file + 'c'
         pye_file = py_file + 'e'
-        pyc_exists = exists(pyc_file)
-        if not pyc_exists or os.stat(py_file).st_mtime != os.stat(pyc_file).st_mtime:
-            py_compile.compile(py_file, cfile=pyc_file)
+        # pyc_file = py_file + 'c'
+
+        # pyc_exists = exists(pyc_file)
+        # if not pyc_exists or os.stat(py_file).st_mtime != os.stat(pyc_file).st_mtime:
+        #     py_compile.compile(py_file, cfile=pyc_file)
         if not exists(pye_file) or os.stat(py_file).st_mtime != os.stat(pye_file).st_mtime:
-            pyconcrete.encrypt_file(pyc_file, pye_file)
+            pyconcrete.encrypt_file(py_file, pye_file, password)
             if args.verbose:
                 print('* create %s' % pye_file)
         else:
             if args.verbose:
                 print('* skip %s' % pye_file)
 
-        # .pyc doesn't exists at beginning, remove it after .pye created
-        if not pyc_exists or args.remove_pyc:
-            os.remove(pyc_file)
+        # # .pyc doesn't exists at beginning, remove it after .pye created
+        # if not pyc_exists or args.remove_pyc:
+        #     os.remove(pyc_file)
         if args.remove_py:
             os.remove(py_file)
 
