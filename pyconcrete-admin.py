@@ -74,7 +74,6 @@ class PyConcreteAdmin(object):
         password = getpass.getpass('Encryption Password: ')
         password_check = getpass.getpass('Retype Password: ')
         assert password == password_check
-
         if isfile(args.source):
             if not args.source.endswith('.py'):
                 raise PyConcreteError("source file should end with .py")
